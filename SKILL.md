@@ -18,15 +18,17 @@ Use this skill when a user sends a message containing a Google Drive link (`driv
 - `whisper` — OpenAI Whisper CLI (`pip install openai-whisper`)
 - NVIDIA GPU with CUDA (RTX 4090 recommended)
 
-## IMPORTANT: Live Progress Updates
+## CRITICAL RULES
 
-**You MUST send a message to the user after EVERY step.** This is a single-user system — be fully transparent. The user wants to see exactly what's happening at each stage. Never run multiple steps silently.
+1. **`--device cuda` is MANDATORY.** Whisper defaults to CPU. You MUST always pass `--device cuda`. Never run whisper without it — CPU transcription is 10-20x slower.
+2. **Send a message after EVERY step.** This is a single-user system — be fully transparent. The user wants to see exactly what's happening. Never run multiple steps silently.
+3. **Ask which model to use** before starting transcription. Don't assume.
 
 ---
 
 ## Workflow
 
-### Step 1: Extract the Google Drive file ID
+### Step 1: Extract the Google Drive file ID & acknowledge
 
 Parse the URL to get the file ID:
 
@@ -74,7 +76,7 @@ ffmpeg -y -i "/tmp/transcribe/input_audio" -vn -ar 16000 -ac 1 -c:a pcm_s16le "/
 
 This converts any format (MP3, M4A, OGG, QTA, MP4, MKV, etc.) to 16kHz mono WAV.
 
-After conversion, check the WAV file and get duration:
+After conversion, get the duration:
 ```bash
 ffprobe -v error -show_entries format=duration -of csv=p=0 "/tmp/transcribe/audio.wav"
 ```
@@ -82,30 +84,66 @@ ffprobe -v error -show_entries format=duration -of csv=p=0 "/tmp/transcribe/audi
 **→ Message the user:**
 > ✅ ffmpeg conversion done!
 > 🎵 Audio duration: XX minutes XX seconds
-> 🔄 Starting Whisper transcription (model: large-v3)... this may take a few minutes.
 
 If ffmpeg failed:
 > ❌ ffmpeg failed — the file format isn't supported or the file may be corrupted.
 
-### Step 4: Transcribe with Whisper
+### Step 4: Ask which Whisper model to use
 
+**→ Message the user and WAIT for their reply:**
+> Which Whisper model do you want?
+>
+> 🚀 **turbo** — fastest, good accuracy (~3x realtime on GPU)
+> 🎯 **large-v3** — best accuracy, slower (~1x realtime on GPU)
+> ⚡ **medium** — balanced speed/accuracy
+> 🏃 **small** — fast, lower accuracy
+>
+> (For a XX-minute file, turbo ≈ ~X min, large-v3 ≈ ~X min)
+
+**Time estimates** (approximate, on RTX 4090):
+- **turbo**: ~3x realtime (10 min audio ≈ 3 min processing)
+- **large-v3**: ~1x realtime (10 min audio ≈ 10 min processing)
+- **medium**: ~5x realtime (10 min audio ≈ 2 min processing)
+- **small**: ~10x realtime (10 min audio ≈ 1 min processing)
+
+Calculate estimated time from the audio duration and include it in the message.
+
+### Step 5: Verify GPU is available
+
+Before running whisper, check CUDA:
 ```bash
-whisper "/tmp/transcribe/audio.wav" --model large-v3 --output_format txt --output_dir "/tmp/transcribe/"
+python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')"
 ```
 
-- **Model:** `large-v3` (best accuracy, fits in 24GB VRAM)
-- **Language:** auto-detected by default. If the user specifies a language, add `--language xx` (e.g., `--language en`, `--language zh`)
-- **Output:** `.txt` file in the same directory
+If CUDA is NOT available:
+> ⚠️ CUDA not detected — Whisper will run on CPU which is 10-20x slower. Proceed anyway? (A 30-min file could take 30+ minutes on CPU)
 
-**→ Message the user:**
+If CUDA is available:
+> 🖥️ GPU: NVIDIA RTX 4090 (CUDA). Starting Whisper with `MODEL_NAME` model...
+
+### Step 6: Transcribe with Whisper
+
+```bash
+whisper "/tmp/transcribe/audio.wav" --model MODEL_NAME --device cuda --output_format txt --output_dir "/tmp/transcribe/"
+```
+
+**MANDATORY FLAGS:**
+- `--device cuda` — NEVER omit this. Without it, whisper defaults to CPU.
+- `--model MODEL_NAME` — use whichever model the user chose
+- `--fp16 True` — enabled by default, keeps it for GPU efficiency
+
+If the user specifies a language, add `--language xx` (e.g., `--language en`, `--language zh`). Otherwise let Whisper auto-detect.
+
+**→ Message the user when complete:**
 > ✅ Whisper transcription complete!
 > 📝 Detected language: XX
+> ⏱️ Processing time: X min X sec
 > Sending transcript now...
 
 If whisper failed:
-> ❌ Whisper failed — [include the error message so the user can see what went wrong]
+> ❌ Whisper failed — [include the full error message so the user can see what went wrong]
 
-### Step 5: Read and send the transcript
+### Step 7: Read and send the transcript
 
 1. Read the output file: `/tmp/transcribe/audio.txt`
 2. If the transcript is **under 4000 characters**: send the full text directly
@@ -119,7 +157,7 @@ If whisper failed:
 >
 > [transcript text here]
 
-### Step 6: Cleanup
+### Step 8: Cleanup
 
 ```bash
 rm -rf /tmp/transcribe/
@@ -130,14 +168,15 @@ rm -rf /tmp/transcribe/
 
 ## Error Handling
 
-At any step, if something fails, **immediately tell the user** what went wrong and what they can do about it:
+At any step, if something fails, **immediately tell the user** what went wrong with the full error output:
 
 | Error | What to tell the user |
 |---|---|
 | `gdown` access denied | "❌ Download failed — the file isn't publicly shared. Set it to 'Anyone with the link can view' in Drive sharing settings." |
 | `ffmpeg` fails | "❌ ffmpeg conversion failed — the file format might not be supported or the file is corrupted." |
-| `whisper` out of memory | "❌ Whisper ran out of GPU memory — the audio might be too long. Try a shorter clip." |
-| `whisper` not found | "❌ Whisper CLI not found on this machine." |
+| CUDA not available | "⚠️ GPU not detected — will run on CPU (much slower). Want to proceed or troubleshoot?" |
+| `whisper` out of memory | "❌ Whisper ran out of GPU memory. Try the `turbo` or `small` model instead." |
+| `whisper` not found | "❌ Whisper CLI not found. Run: `pip install openai-whisper`" |
 
 ## Example Interaction
 
@@ -146,8 +185,11 @@ At any step, if something fails, **immediately tell the user** what went wrong a
 **Agent sends these messages in sequence:**
 
 1. 🔗 Got it — file ID: `1aBcDeFgHiJk`. Starting download from Google Drive...
-2. ✅ Download complete! Saved to `/tmp/transcribe/input_audio` (147 MB). Starting ffmpeg conversion...
-3. ✅ ffmpeg done! Audio duration: 42 min 15 sec. Starting Whisper (large-v3)... this'll take a few minutes.
-4. ✅ Whisper complete! Detected language: English. Sending transcript...
-5. 📄 Transcript (5,230 words): [full text]
-6. 🧹 Temp files cleaned up. Done!
+2. ✅ Download complete! Saved to `/tmp/transcribe/input_audio` (147 MB). Starting ffmpeg...
+3. ✅ ffmpeg done! Audio duration: 42 min 15 sec.
+4. Which model? 🚀 turbo (~14 min) | 🎯 large-v3 (~42 min) | ⚡ medium (~8 min) | 🏃 small (~4 min)
+5. *(User picks turbo)*
+6. 🖥️ GPU: RTX 4090 (CUDA) ✓. Starting Whisper turbo...
+7. ✅ Whisper done! Language: English. Time: 13 min 22 sec. Sending transcript...
+8. 📄 Transcript (5,230 words): [full text]
+9. 🧹 Temp files cleaned up. Done!
