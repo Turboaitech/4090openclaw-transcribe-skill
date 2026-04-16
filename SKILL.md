@@ -9,7 +9,13 @@ Transcribe audio or video files from **public Google Drive links** using the loc
 
 ## When to Use
 
-Use this skill when a user sends a message containing a Google Drive link (`drive.google.com`) **and** mentions transcribing, transcription, subtitles, or asks "what does this say/contain."
+Use this skill when a user sends a message containing a Google Drive link (`drive.google.com`). Trigger on ANY of these:
+
+- The link alone with no other text
+- The user mentions transcribing, transcription, subtitles, or asks "what does this say/contain"
+- The link points to a file with an audio/video extension (.mp3, .wav, .m4a, .ogg, .mp4, .mkv, .avi, .webm, .flac, .qta, etc.)
+
+**When in doubt, assume the user wants transcription** — this is the primary purpose of receiving Drive links.
 
 ## Prerequisites
 
