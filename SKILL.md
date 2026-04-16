@@ -29,6 +29,9 @@ Use this skill when a user sends a message containing a Google Drive link (`driv
 1. **`--device cuda` is MANDATORY.** Whisper defaults to CPU. You MUST always pass `--device cuda`. Never run whisper without it — CPU transcription is 10-20x slower.
 2. **Send a message after EVERY step.** This is a single-user system — be fully transparent. The user wants to see exactly what's happening. Never run multiple steps silently.
 3. **Ask which model to use** before starting transcription. Don't assume.
+4. **Use a unique temp directory per job** to avoid collisions between runs. Use a timestamp: `/tmp/transcribe-YYYYMMDD-HHMMSS/`
+5. **ALWAYS clean up temp files** when done — even if a step fails. Never leave files behind.
+6. **This is Windows.** Use `C:\tmp\` not `/tmp/`. Whisper names output files after the input filename (e.g., `audio.wav` → `audio.txt`), so keep the input filename consistent as `audio.wav`.
 
 ---
 
@@ -50,24 +53,26 @@ Parse the URL to get the file ID:
 
 ### Step 2: Download the file
 
+Generate a unique working directory using the current timestamp:
 ```bash
-mkdir -p /tmp/transcribe
-gdown "https://drive.google.com/uc?id=FILE_ID" -O "/tmp/transcribe/input_audio" --fuzzy
+WORKDIR="C:\tmp\transcribe-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$WORKDIR"
+gdown "https://drive.google.com/uc?id=FILE_ID" -O "$WORKDIR/input_audio" --fuzzy
 ```
 
 Notes:
 - The `--fuzzy` flag handles various Google Drive URL formats
 - If `gdown` fails with "Access Denied", tell the user to set sharing to "Anyone with the link can view"
-- You can also pass the full Drive URL directly: `gdown "FULL_URL" -O "/tmp/transcribe/input_audio" --fuzzy`
+- You can also pass the full Drive URL directly: `gdown "FULL_URL" -O "$WORKDIR/input_audio" --fuzzy`
 
 After download completes, check the file size:
 ```bash
-ls -lh /tmp/transcribe/input_audio
+ls -lh "$WORKDIR/input_audio"
 ```
 
 **→ Message the user:**
 > ✅ Download complete!
-> 📁 Saved to: `/tmp/transcribe/input_audio`
+> 📁 Saved to: `C:\tmp\transcribe-XXXXXXXX\input_audio`
 > 📦 File size: XX MB
 > Starting audio conversion with ffmpeg...
 
@@ -77,14 +82,14 @@ If download failed:
 ### Step 3: Convert to Whisper-compatible format
 
 ```bash
-ffmpeg -y -i "/tmp/transcribe/input_audio" -vn -ar 16000 -ac 1 -c:a pcm_s16le "/tmp/transcribe/audio.wav"
+ffmpeg -y -i "$WORKDIR/input_audio" -vn -ar 16000 -ac 1 -c:a pcm_s16le "$WORKDIR/audio.wav"
 ```
 
 This converts any format (MP3, M4A, OGG, QTA, MP4, MKV, etc.) to 16kHz mono WAV.
 
 After conversion, get the duration:
 ```bash
-ffprobe -v error -show_entries format=duration -of csv=p=0 "/tmp/transcribe/audio.wav"
+ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORKDIR/audio.wav"
 ```
 
 **→ Message the user:**
@@ -130,7 +135,7 @@ If CUDA is available:
 ### Step 6: Transcribe with Whisper
 
 ```bash
-whisper "/tmp/transcribe/audio.wav" --model MODEL_NAME --device cuda --output_format txt --output_dir "/tmp/transcribe/"
+whisper "$WORKDIR/audio.wav" --model MODEL_NAME --device cuda --output_format txt --output_dir "$WORKDIR/"
 ```
 
 **MANDATORY FLAGS:**
@@ -140,10 +145,15 @@ whisper "/tmp/transcribe/audio.wav" --model MODEL_NAME --device cuda --output_fo
 
 If the user specifies a language, add `--language xx` (e.g., `--language en`, `--language zh`). Otherwise let Whisper auto-detect.
 
+**Output file will be:** `$WORKDIR/audio.txt` (whisper names it after the input file `audio.wav` → `audio.txt`)
+
+If the user asks for SRT format later, re-run with `--output_format srt` → produces `$WORKDIR/audio.srt`.
+
 **→ Message the user when complete:**
 > ✅ Whisper transcription complete!
 > 📝 Detected language: XX
 > ⏱️ Processing time: X min X sec
+> 📁 Output: `$WORKDIR/audio.txt`
 > Sending transcript now...
 
 If whisper failed:
@@ -151,9 +161,10 @@ If whisper failed:
 
 ### Step 7: Read and send the transcript
 
-1. Read the output file: `/tmp/transcribe/audio.txt`
-2. If the transcript is **under 4000 characters**: send the full text directly
-3. If the transcript is **over 4000 characters**:
+1. Read the output file: `$WORKDIR/audio.txt`
+2. **Verify the file exists first** — if not, check `$WORKDIR/` for any `.txt` files (the output name depends on the input filename)
+3. If the transcript is **under 4000 characters**: send the full text directly
+4. If the transcript is **over 4000 characters**:
    - Send the first chunk (~3500 chars)
    - Follow up with remaining chunks
    - At the end, mention total word count
@@ -165,12 +176,14 @@ If whisper failed:
 
 ### Step 8: Cleanup
 
+**ALWAYS run cleanup, even if earlier steps failed.** Do not skip this.
+
 ```bash
-rm -rf /tmp/transcribe/
+rm -rf "$WORKDIR"
 ```
 
 **→ Message the user:**
-> 🧹 Temp files cleaned up. Done!
+> 🧹 Temp files cleaned up (`$WORKDIR` removed). Done!
 
 ## Error Handling
 
