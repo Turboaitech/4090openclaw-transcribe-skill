@@ -159,20 +159,44 @@ If the user asks for SRT format later, re-run with `--output_format srt` → pro
 If whisper failed:
 > ❌ Whisper failed — [include the full error message so the user can see what went wrong]
 
-### Step 7: Read and send the transcript
+### Step 7: Generate PDF and send the transcript
 
 1. Read the output file: `$WORKDIR/audio.txt`
 2. **Verify the file exists first** — if not, check `$WORKDIR/` for any `.txt` files (the output name depends on the input filename)
-3. If the transcript is **under 4000 characters**: send the full text directly
-4. If the transcript is **over 4000 characters**:
-   - Send the first chunk (~3500 chars)
-   - Follow up with remaining chunks
-   - At the end, mention total word count
+3. **Generate a PDF** from the transcript:
 
-**→ Message the user (with transcript):**
-> 📄 Transcript (XX words):
+```bash
+python -c "
+from fpdf import FPDF
+import sys
+
+txt_path = sys.argv[1]
+pdf_path = sys.argv[2]
+
+with open(txt_path, 'r', encoding='utf-8') as f:
+    text = f.read()
+
+pdf = FPDF()
+pdf.add_page()
+pdf.add_font('msyh', '', 'C:/Windows/Fonts/msyh.ttc')
+pdf.set_font('msyh', size=11)
+pdf.multi_cell(0, 7, text)
+pdf.output(pdf_path)
+" "$WORKDIR/audio.txt" "$WORKDIR/transcript.pdf"
+```
+
+> **Note:** If `fpdf2` is not installed: `pip install fpdf2`
+> The font `msyh.ttc` (Microsoft YaHei) supports English + Chinese.
+
+4. Send the PDF file to the user as a Telegram document
+5. Also send a short text summary (first ~500 words + total word count) as a message
+
+**→ Message the user:**
+> 📄 Transcript (XX words) — PDF attached!
 >
-> [transcript text here]
+> **Summary:** [first ~200 words of transcript]...
+>
+> Full transcript is in the PDF above.
 
 ### Step 8: Cleanup
 
